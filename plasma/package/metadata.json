@@ -1,0 +1,15 @@
+{
+    "KPackageStructure": "Plasma/Applet",
+    "KPlugin": {
+        "Authors": [{ "Name": "Andre Tarnowsky" }],
+        "Category": "Date and Time",
+        "Description": "Zeiterfassung starten und pausieren, mit der Arbeitszeit von heute",
+        "Icon": "chronometer",
+        "Id": "de.antatime.widget",
+        "License": "MIT",
+        "Name": "AnTaTime",
+        "Version": "1.0.0",
+        "Website": "https://github.com/lotterfriends/antatime-widget"
+    },
+    "X-Plasma-API-Minimum-Version": "6.0"
+}

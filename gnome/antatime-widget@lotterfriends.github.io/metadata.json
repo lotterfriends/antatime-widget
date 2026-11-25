@@ -1,0 +1,7 @@
+{
+  "uuid": "antatime-widget@lotterfriends.github.io",
+  "name": "AnTaTime",
+  "description": "Zeiterfassung starten und pausieren, mit der Arbeitszeit von heute in der oberen Leiste. Benötigt den Dienst antatime-widget.",
+  "url": "https://github.com/lotterfriends/antatime-widget",
+  "shell-version": ["45", "46", "47", "48", "49"]
+}
