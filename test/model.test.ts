@@ -111,3 +111,22 @@ test('Zustand übersteht Speichern und Laden', () => {
   assert.equal(w.records.get('c:dailyHours')!.content, '8.0');
   assert.equal(w.pending().length, 1);
 });
+
+test('Pause auf veraltetem Stand überschreibt kein früheres Ende', () => {
+  const v = new Vault();
+  session(v, 'a', at(8), null, 5);
+  // Tage ohne Verbindung, dann „Pause“ – anderswo wurde längst beendet.
+  const late = at(8) + 3 * 86_400_000;
+  v.toggle(late, false);
+  assert.deepEqual(v.pending(), ['s:a']);
+  const saved = new Vault();
+  saved.load(JSON.parse(JSON.stringify(v.toJSON())));
+  session(saved, 'a', at(8), at(17), 10);
+  assert.equal(saved.sessions()[0]!.end, at(17));
+  assert.deepEqual(saved.pending(), []);
+
+  // Läuft anderswo unverändert weiter: „Pause“ gilt.
+  session(v, 'a', at(8), null, 10);
+  assert.equal(v.sessions()[0]!.end, late);
+  assert.deepEqual(v.pending(), ['s:a']);
+});

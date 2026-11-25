@@ -21,6 +21,21 @@ export interface Entry {
   modified: number;
   /** Lokale Änderung, die der Server noch nicht bestätigt hat. */
   pending: boolean;
+  /**
+   * Nur bei ausstehenden Änderungen, die eine laufende Arbeitszeit beendet
+   * haben: Zeitstempel des Stands, auf dem das beruhte (siehe `applyRemote`).
+   */
+  stopBase?: number;
+}
+
+/** Hat die Arbeitszeit mit diesem JSON-Text ein Ende? */
+function sessionEnded(content: string): boolean {
+  try {
+    const j = JSON.parse(content) as Record<string, unknown>;
+    return j.endUtc != null || j.end != null;
+  } catch {
+    return false;
+  }
 }
 
 export interface Session {
@@ -104,16 +119,30 @@ export class Vault {
   /**
    * Übernimmt einen Datensatz vom Server (Last-Writer-Wins nach
    * Zeitstempel). Gibt `true` zurück, wenn sich der Inhalt geändert hat.
+   *
+   * Ausnahme wie in der App: Wurde hier eine laufende Arbeitszeit beendet,
+   * ohne zu wissen, dass sie anderswo längst beendet (oder gelöscht) ist,
+   * gilt deren Stand – sonst ersetzte „Pause“ nach Tagen ohne Verbindung das
+   * richtige Ende durch „jetzt“, und die Arbeitszeit reichte über alle
+   * seither erfassten hinweg.
    */
   applyRemote(name: string, modified: number, content: string | null): boolean {
     this.clock = Math.max(this.clock, modified);
     const local = this.records.get(name);
-    if (local && local.modified > modified) {
+    const staleStop =
+      local !== undefined &&
+      local.pending &&
+      local.stopBase !== undefined &&
+      modified > local.stopBase &&
+      (content === null || sessionEnded(content));
+    if (staleStop) {
+      // Weiter unten übernehmen.
+    } else if (local && local.modified > modified) {
       // Unser Stand ist neuer; der Server hat ihn überschrieben → erneut senden.
       local.pending = true;
       return false;
     }
-    if (local && local.modified === modified) {
+    if (!staleStop && local && local.modified === modified) {
       const remote = content ?? '';
       const mine = local.content ?? '';
       if (remote === mine) {
@@ -193,11 +222,15 @@ export class Vault {
   }
 
   #setSession(s: Session, start: number, end: number | null, now: number): void {
-    this.records.set(`s:${s.id}`, {
+    const before = this.records.get(`s:${s.id}`);
+    const entry: Entry = {
       content: sessionContent(s.json, start, end),
       modified: this.tick(now),
       pending: true,
-    });
+    };
+    // Pause: Eine laufende Arbeitszeit wurde beendet.
+    if (before && s.end === null && end !== null) entry.stopBase = before.modified;
+    this.records.set(`s:${s.id}`, entry);
     this.#sessions = null;
   }
 
@@ -299,7 +332,11 @@ export class Vault {
   toJSON(): unknown {
     const records: Record<string, unknown[]> = {};
     for (const [name, e] of this.records) {
-      records[name] = e.pending ? [e.content, e.modified, 1] : [e.content, e.modified];
+      records[name] = !e.pending
+        ? [e.content, e.modified]
+        : e.stopBase === undefined
+          ? [e.content, e.modified, 1]
+          : [e.content, e.modified, 1, e.stopBase];
     }
     return { seq: this.seq, clock: this.clock, epoch: this.epoch, records };
   }
@@ -314,6 +351,7 @@ export class Vault {
         content: typeof v[0] === 'string' ? v[0] : null,
         modified: Number(v[1]) || 0,
         pending: v.length > 2,
+        ...(typeof v[3] === 'number' ? { stopBase: v[3] } : {}),
       });
     }
   }
