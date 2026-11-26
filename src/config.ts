@@ -22,16 +22,21 @@ export const stateFile = join(stateDir, 'state.json');
 export interface SyncConfig {
   url: string;
   code: string;
+  /** Server-Schlüssel, wenn der Server eine Anmeldung verlangt (sonst `null`). */
+  serverKey: string | null;
   /** Woher die Zugangsdaten stammen (für `status`). */
   source: 'config' | 'app';
 }
 
 function valid(j: unknown, source: SyncConfig['source']): SyncConfig | null {
   if (!j || typeof j !== 'object') return null;
-  const { url, code } = j as Record<string, unknown>;
+  const { url, code, serverKey } = j as Record<string, unknown>;
   if (typeof url !== 'string' || url.trim() === '' || typeof code !== 'string') return null;
   const c = normalizeCode(code);
-  return c ? { url: url.trim(), code: c, source } : null;
+  const key = typeof serverKey === 'string' && serverKey.trim() !== '' ? serverKey.trim() : null;
+  // Ein unlesbarer Schlüssel bleibt stehen: Die Anmeldung scheitert dann mit
+  // einer Meldung, statt dass das Widget still ohne Schlüssel verbindet.
+  return c ? { url: url.trim(), code: c, serverKey: key, source } : null;
 }
 
 function readJson(file: string): unknown {
@@ -93,8 +98,8 @@ export function writePrivate(file: string, text: string): void {
   renameSync(tmp, file);
 }
 
-export function saveConfig(url: string, code: string): void {
-  writePrivate(configFile, `${JSON.stringify({ url, code }, null, 2)}\n`);
+export function saveConfig(url: string, code: string, serverKey: string | null = null): void {
+  writePrivate(configFile, `${JSON.stringify({ url, code, ...(serverKey ? { serverKey } : {}) }, null, 2)}\n`);
 }
 
 export function loadState(): Record<string, unknown> | null {

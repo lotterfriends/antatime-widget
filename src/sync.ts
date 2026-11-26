@@ -1,11 +1,31 @@
-import type { SyncCrypto } from './crypto.ts';
+import { answerChallenge, sameBytes, type SyncCrypto } from './crypto.ts';
 import type { Vault } from './model.ts';
-import { decodeServerMessage, encodeHello, encodePush, pingFrame, type WireRecord } from './protocol.ts';
+import {
+  ErrorCode,
+  decodeServerMessage,
+  encodeAuth,
+  encodeHello,
+  encodePush,
+  pingFrame,
+  type WireRecord,
+} from './protocol.ts';
 
 /** Wie in der App: zu große Datensätze würden den ganzen PUSH scheitern lassen. */
 const MAX_RECORD_BYTES = 16 * 1024;
 const MAX_PER_PUSH = 500;
 const RETRY_S = [1, 2, 5, 10, 30, 60];
+/** Nach Fehlern, die sich nicht von selbst beheben (Server voll, Schlüssel). */
+const BLOCKED_RETRY_S = 300;
+
+/** Meldungen für die Anzeige, wenn der Server das Widget nicht hereinlässt. */
+export const PROBLEMS = {
+  keyRequired: 'Der Server verlangt einen Server-Schlüssel – in der App eintragen oder „antatime-widget setup“',
+  keyWrong: 'Der Server-Schlüssel ist falsch – in der App oder mit „antatime-widget setup“ korrigieren',
+  keyUnused: 'Der Server verwendet keinen Server-Schlüssel – Schlüssel entfernen',
+  serverUnverified: 'Der Server konnte sich nicht ausweisen – Adresse und Server-Schlüssel prüfen',
+  serverFull: 'Der Server ist voll (maximale Anzahl an Nutzern erreicht)',
+  quota: 'Der Speicherplatz auf dem Server ist voll',
+} as const;
 const CHECK_MS = 10_000;
 const PING_AFTER_MS = 20_000;
 const DEAD_AFTER_MS = 45_000;
@@ -33,11 +53,20 @@ export class SyncClient {
   deleted = false;
   /** Letzte Fehlermeldung des Servers. */
   error: string | null = null;
+  /**
+   * Der Server lässt das Widget nicht herein (voll, Server-Schlüssel fehlt
+   * oder ist falsch): Text für die Anzeige, sonst `null`.
+   */
+  problem: string | null = null;
 
   readonly #url: string;
   readonly #crypto: SyncCrypto;
   readonly #vault: Vault;
   readonly #onChange: () => void;
+  readonly #serverKey: Uint8Array | null;
+  /** Anmeldung: erwarteter Nachweis des Servers, solange AUTH_OK aussteht. */
+  #proof: Uint8Array | null = null;
+  #helloSent = false;
   #ws: WebSocket | null = null;
   #gen = 0;
   #attempt = 0;
@@ -48,7 +77,14 @@ export class SyncClient {
   #inflight: { reqId: number; sent: [string, number][] } | null = null;
   #stopped = true;
 
-  constructor(url: string, crypto: SyncCrypto, vault: Vault, onChange: () => void) {
+  constructor(
+    url: string,
+    crypto: SyncCrypto,
+    vault: Vault,
+    onChange: () => void,
+    serverKey: Uint8Array | null = null,
+  ) {
+    this.#serverKey = serverKey;
     this.#url = wsUrl(url);
     this.#crypto = crypto;
     this.#vault = vault;
@@ -104,7 +140,12 @@ export class SyncClient {
     ws.binaryType = 'arraybuffer';
     this.#ws = ws;
     ws.onopen = () => {
-      if (gen === this.#gen) ws.send(encodeHello(this.#crypto.vaultId, this.#vault.seq));
+      if (gen !== this.#gen) return;
+      // Mit Server-Schlüssel erst anmelden: Der Server schickt von sich aus
+      // eine CHALLENGE. Das PING zeigt, ob er überhaupt eine Anmeldung kennt –
+      // kommt zuerst PONG, verwendet er keinen Schlüssel.
+      if (this.#serverKey) ws.send(pingFrame);
+      else this.#hello(ws);
     };
     ws.onmessage = (ev) => {
       if (gen !== this.#gen || !(ev.data instanceof ArrayBuffer)) return;
@@ -133,6 +174,8 @@ export class SyncClient {
     const ws = this.#ws;
     this.#ws = null;
     this.#inflight = null;
+    this.#proof = null;
+    this.#helloSent = false;
     this.connected = false;
     if (ws) {
       ws.onopen = ws.onmessage = ws.onclose = ws.onerror = null;
@@ -146,7 +189,7 @@ export class SyncClient {
 
   #scheduleRetry(): void {
     if (this.#stopped || this.deleted) return;
-    const s = RETRY_S[Math.min(this.#attempt++, RETRY_S.length - 1)]!;
+    const s = this.problem ? BLOCKED_RETRY_S : RETRY_S[Math.min(this.#attempt++, RETRY_S.length - 1)]!;
     if (this.#retry) clearTimeout(this.#retry);
     this.#retry = setTimeout(() => this.#connect(), s * 1000 * (0.75 + Math.random() / 2));
   }
@@ -165,9 +208,42 @@ export class SyncClient {
     }
   }
 
+  #hello(ws: WebSocket): void {
+    this.#helloSent = true;
+    ws.send(encodeHello(this.#crypto.vaultId, this.#vault.seq));
+  }
+
+  /** Der Server lässt uns nicht herein: anzeigen und nur selten neu versuchen. */
+  #block(problem: string): void {
+    this.problem = problem;
+    this.error = problem;
+    console.error(`Sync: ${problem}`);
+    this.#gen++;
+    this.#close();
+    this.#onChange();
+    this.#scheduleRetry();
+  }
+
   #onFrame(buf: Uint8Array): void {
     const msg = decodeServerMessage(buf);
+    const ws = this.#ws;
     switch (msg.type) {
+      case 'challenge': {
+        // Ohne Schlüssel beantwortet der Server unser HELLO gleich mit einem Fehler.
+        if (!this.#serverKey || !ws || this.#helloSent) break;
+        const answer = answerChallenge(this.#serverKey, msg.nonce);
+        this.#proof = answer.proof;
+        ws.send(encodeAuth(answer.ephPub, answer.mac));
+        break;
+      }
+      case 'authOk': {
+        const expected = this.#proof;
+        this.#proof = null;
+        if (!expected || !ws || this.#helloSent) break;
+        if (!sameBytes(expected, msg.proof)) return this.#block(PROBLEMS.serverUnverified);
+        this.#hello(ws);
+        break;
+      }
       case 'changes':
         if (this.#apply(msg.records)) this.#onChange();
         this.push();
@@ -184,6 +260,7 @@ export class SyncClient {
         if (msg.epoch !== null) this.#vault.epoch = msg.epoch;
         this.#attempt = 0;
         this.error = null;
+        this.problem = null;
         this.connected = true;
         this.#onChange();
         this.push();
@@ -209,8 +286,21 @@ export class SyncClient {
       case 'error':
         this.error = msg.message;
         console.error(`Sync: Server meldet Fehler ${msg.code}: ${msg.message}`);
+        // Der Server trennt danach; bis zum nächsten Versuch länger warten.
+        this.problem =
+          msg.code === ErrorCode.authRequired
+            ? PROBLEMS.keyRequired
+            : msg.code === ErrorCode.authFailed
+              ? PROBLEMS.keyWrong
+              : msg.code === ErrorCode.serverFull
+                ? PROBLEMS.serverFull
+                : msg.code === ErrorCode.quotaExceeded
+                  ? PROBLEMS.quota
+                  : null;
         break;
       case 'pong':
+        // Schlüssel eingetragen, aber der Server hat keine CHALLENGE geschickt.
+        if (this.#serverKey && !this.#helloSent && !this.#proof) this.#block(PROBLEMS.keyUnused);
         break;
     }
   }

@@ -1,4 +1,14 @@
-import { createCipheriv, createDecipheriv, createHmac, hkdfSync, randomBytes } from 'node:crypto';
+import {
+  createCipheriv,
+  createDecipheriv,
+  createHmac,
+  createPublicKey,
+  diffieHellman,
+  generateKeyPairSync,
+  hkdfSync,
+  randomBytes,
+  timingSafeEqual,
+} from 'node:crypto';
 
 /**
  * Ende-zu-Ende-Verschlüsselung des Syncs – Gegenstück zu
@@ -65,4 +75,61 @@ export class SyncCrypto {
     d.setAuthTag(buf.subarray(buf.length - 16));
     return Buffer.concat([d.update(buf.subarray(12, buf.length - 16)), d.final()]);
   }
+}
+
+// ---------------------------------------------------------------------------
+// Anmeldung an Servern mit Server-Schlüssel – siehe antatime-server/src/auth.ts
+
+const AUTH_SALT = Buffer.from('antatime-auth-v1');
+const SPKI_PREFIX = Buffer.from('302a300506032b656e032100', 'hex');
+const SERVER_KEY_LENGTH = 52;
+
+/**
+ * Liest den Server-Schlüssel (52 Zeichen Base32, 32 Byte); tolerant wie beim
+ * Sync-Code. `null`, wenn es kein gültiger Schlüssel ist.
+ */
+export function decodeServerKey(input: string): Buffer | null {
+  const s = input
+    .toUpperCase()
+    .replace(/[\s\-_.]/g, '')
+    .replace(/O/g, '0')
+    .replace(/[IL]/g, '1');
+  if (s.length !== SERVER_KEY_LENGTH) return null;
+  const out = Buffer.alloc(32);
+  let acc = 0;
+  let bits = 0;
+  let pos = 0;
+  for (const c of s) {
+    const v = ALPHABET.indexOf(c);
+    if (v < 0) return null;
+    acc = (acc << 5) | v;
+    bits += 5;
+    if (bits >= 8) {
+      bits -= 8;
+      if (pos < out.length) out[pos++] = (acc >> bits) & 0xff;
+      acc &= (1 << bits) - 1;
+    }
+  }
+  return acc === 0 ? out : null;
+}
+
+/**
+ * Antwort auf die CHALLENGE des Servers: Felder für AUTH und der Nachweis,
+ * den der Server in AUTH_OK liefern muss.
+ */
+export function answerChallenge(serverKey: Uint8Array, nonce: Uint8Array): { ephPub: Buffer; mac: Buffer; proof: Buffer } {
+  const eph = generateKeyPairSync('x25519');
+  const der = eph.publicKey.export({ format: 'der', type: 'spki' });
+  const ephPub = Buffer.from(der.subarray(der.length - 32));
+  const shared = diffieHellman({
+    privateKey: eph.privateKey,
+    publicKey: createPublicKey({ key: Buffer.concat([SPKI_PREFIX, serverKey]), format: 'der', type: 'spki' }),
+  });
+  const key = Buffer.from(hkdfSync('sha256', shared, AUTH_SALT, Buffer.concat([nonce, ephPub, serverKey]), 32));
+  const mac = (role: string) => createHmac('sha256', key).update(role).update(nonce).digest();
+  return { ephPub, mac: mac('client'), proof: mac('server') };
+}
+
+export function sameBytes(a: Uint8Array, b: Uint8Array): boolean {
+  return a.length === b.length && timingSafeEqual(a, b);
 }

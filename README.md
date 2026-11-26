@@ -37,10 +37,12 @@ Danach das Widget in die Leiste legen:
 Ist auf dem Rechner die AnTaTime-Desktop-App mit Synchronisation eingerichtet, übernimmt der Dienst Server und Sync-Code von dort – es ist nichts weiter zu tun. Sonst:
 
 ```bash
-antatime-widget setup     # fragt nach Server und Sync-Code
+antatime-widget setup     # fragt nach Server, Sync-Code und Server-Schlüssel
 ```
 
 Die Angaben liegen dann in `~/.config/antatime-widget/config.json` (nur für den Nutzer lesbar) und gehen denen der App vor.
+
+Verlangt der Server eine Anmeldung, braucht auch der Dienst den **Server-Schlüssel** (vom Betreiber des Servers). Ist er in der Desktop-App eingetragen, wird er von dort übernommen; sonst fragt `setup` danach (leer lassen, wenn der Server keinen verlangt). Lässt der Server den Dienst nicht herein – Schlüssel fehlt oder ist falsch, oder der Server hat seine Höchstzahl an Nutzern erreicht –, steht der Grund im Hinweis des Widgets (`hint`), und der Dienst versucht es alle fünf Minuten erneut.
 
 ## Befehle
 

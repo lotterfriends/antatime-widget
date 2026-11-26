@@ -2,7 +2,7 @@
 import { request } from 'node:http';
 import { createInterface } from 'node:readline/promises';
 import { configFile, loadConfig, port, saveConfig } from './config.ts';
-import { normalizeCode } from './crypto.ts';
+import { decodeServerKey, normalizeCode } from './crypto.ts';
 import { Daemon, type View } from './daemon.ts';
 import { wsUrl } from './sync.ts';
 
@@ -13,7 +13,7 @@ const HELP = `AnTaTime-Widget – Zeiterfassung in der Kontrollleiste
   antatime-widget start      Zeiterfassung starten
   antatime-widget pause      Zeiterfassung pausieren
   antatime-widget toggle     Start/Pause umschalten
-  antatime-widget setup      Server und Sync-Code von Hand eintragen
+  antatime-widget setup      Server, Sync-Code und ggf. Server-Schlüssel von Hand eintragen
                              (nur nötig ohne AnTaTime-Desktop-App mit Sync)
 `;
 
@@ -51,7 +51,12 @@ async function setup(): Promise<void> {
     // Der Code steht in der App unter Einstellungen → Synchronisation.
     const code = normalizeCode(await rl.question('Sync-Code: '));
     if (!code) throw new Error('Das ist kein gültiger Sync-Code (25 Zeichen).');
-    saveConfig(url, code);
+    // Nur bei Servern mit Anmeldung; den Schlüssel nennt der Betreiber.
+    const keyInput = (await rl.question('Server-Schlüssel (leer lassen, wenn der Server keinen verlangt): ')).trim();
+    if (keyInput !== '' && !decodeServerKey(keyInput)) {
+      throw new Error('Das ist kein gültiger Server-Schlüssel (52 Zeichen).');
+    }
+    saveConfig(url, code, keyInput === '' ? null : keyInput.toUpperCase());
     console.log(`Gespeichert in ${configFile}`);
   } finally {
     rl.close();

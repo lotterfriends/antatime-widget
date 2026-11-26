@@ -7,15 +7,26 @@ export const Op = {
   hello: 0x01,
   push: 0x02,
   ping: 0x04,
+  auth: 0x05,
   changes: 0x81,
   synced: 0x82,
   ack: 0x83,
   pong: 0x84,
   vaultDeleted: 0x85,
+  challenge: 0x86,
+  authOk: 0x87,
   error: 0x8f,
 } as const;
 
 export const PROTOCOL_VERSION = 1;
+
+/** Fehlercodes des Servers, die das Widget unterscheidet. */
+export const ErrorCode = {
+  quotaExceeded: 7,
+  authRequired: 8,
+  authFailed: 9,
+  serverFull: 10,
+} as const;
 
 export interface WireRecord {
   key: Uint8Array;
@@ -29,6 +40,8 @@ export type ServerMessage =
   | { type: 'ack'; reqId: number; firstSeq: number }
   | { type: 'pong' }
   | { type: 'vaultDeleted' }
+  | { type: 'challenge'; nonce: Uint8Array }
+  | { type: 'authOk'; proof: Uint8Array }
   | { type: 'error'; code: number; message: string };
 
 class Reader {
@@ -90,6 +103,10 @@ export function decodeServerMessage(buf: Uint8Array): ServerMessage {
       return { type: 'pong' };
     case Op.vaultDeleted:
       return { type: 'vaultDeleted' };
+    case Op.challenge:
+      return { type: 'challenge', nonce: r.bytes(32) };
+    case Op.authOk:
+      return { type: 'authOk', proof: r.bytes(32) };
     case Op.error: {
       const code = r.u8();
       return { type: 'error', code, message: Buffer.from(buf.subarray(r.pos)).toString('utf8') };
@@ -132,3 +149,7 @@ export function encodePush(reqId: number, records: { key: Uint8Array; data: Uint
 }
 
 export const pingFrame = Uint8Array.of(Op.ping);
+
+export function encodeAuth(ephPub: Uint8Array, mac: Uint8Array): Uint8Array {
+  return new Writer().u8(Op.auth).bytes(ephPub).bytes(mac).finish();
+}

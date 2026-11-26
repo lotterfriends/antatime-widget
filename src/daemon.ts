@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { loadConfig, loadState, port, stateFile, writePrivate, type SyncConfig } from './config.ts';
-import { SyncCrypto } from './crypto.ts';
+import { SyncCrypto, decodeServerKey } from './crypto.ts';
 import { Vault } from './model.ts';
 import { render, type Format } from './render.ts';
 import { SyncClient } from './sync.ts';
@@ -58,7 +58,8 @@ export class Daemon {
   /** Zugangsdaten (neu) laden und die Verbindung bei Bedarf neu aufbauen. */
   reload(config: SyncConfig | null = loadConfig()): void {
     const old = this.#config;
-    if (old?.url === config?.url && old?.code === config?.code && !this.#client?.deleted) return;
+    const same = old?.url === config?.url && old?.code === config?.code && old?.serverKey === config?.serverKey;
+    if (same && !this.#client?.deleted) return;
     // Wurde der Sync beendet, bleibt das Widget aus, bis ein anderer Code
     // eingerichtet ist.
     if (this.#client?.deleted && old?.code === config?.code) return;
@@ -71,7 +72,10 @@ export class Daemon {
       const vaultId = crypto.vaultId.toString('hex');
       const state = loadState();
       if (state?.vault === vaultId) this.vault.load(state);
-      this.#client = new SyncClient(config.url, crypto, this.vault, () => this.#changed());
+      // Unlesbarer Schlüssel: mit einem sicher falschen anmelden, damit die
+      // Anzeige „Server-Schlüssel ist falsch“ meldet.
+      const serverKey = config.serverKey === null ? null : (decodeServerKey(config.serverKey) ?? Buffer.alloc(32, 1));
+      this.#client = new SyncClient(config.url, crypto, this.vault, () => this.#changed(), serverKey);
       this.#client.start();
     }
     this.#changed();
@@ -154,7 +158,9 @@ export class Daemon {
       today: `Heute: ${worked} von ${formatDuration(s.targetMs)}`,
       hint: client.connected
         ? null
-        : this.vault.pending().length > 0
+        : client.problem
+          ? client.problem
+          : this.vault.pending().length > 0
           ? 'Offline – Änderungen werden später übertragen'
           : 'Offline – Stand evtl. nicht aktuell',
     };
