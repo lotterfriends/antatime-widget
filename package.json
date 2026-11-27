@@ -1,6 +1,6 @@
 {
   "name": "antatime-widget",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "AnTaTime in der Kontrollleiste: Start/Pause und die Arbeitszeit von heute (KDE Plasma, GNOME, macOS)",
   "private": true,
   "type": "module",

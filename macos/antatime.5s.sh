@@ -1,6 +1,6 @@
 #!/bin/bash
 # <xbar.title>AnTaTime</xbar.title>
-# <xbar.version>v1.1.0</xbar.version>
+# <xbar.version>v1.2.0</xbar.version>
 # <xbar.author>Andre Tarnowsky</xbar.author>
 # <xbar.desc>Zeiterfassung starten und pausieren, mit der Arbeitszeit von heute.</xbar.desc>
 # <xbar.abouturl>https://github.com/lotterfriends/antatime-widget</xbar.abouturl>
