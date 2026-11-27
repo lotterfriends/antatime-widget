@@ -24,7 +24,7 @@ cd antatime-widget
 ./install.sh
 ```
 
-Das Skript installiert für den aktuellen Nutzer den Dienst (Start bei der Anmeldung über systemd bzw. launchd), den Befehl `~/.local/bin/antatime-widget` und das Widget der vorhandenen Oberfläche. Erneut ausführen aktualisiert, `./uninstall.sh` entfernt alles wieder.
+Das Skript installiert für den aktuellen Nutzer den Dienst (Start bei der Anmeldung über systemd bzw. launchd), den Befehl `~/.local/bin/antatime-widget` und das Widget der vorhandenen Oberfläche. Später holt `antatime-widget update` neue Versionen, `./uninstall.sh` entfernt alles wieder.
 
 Danach das Widget in die Leiste legen:
 
@@ -54,6 +54,17 @@ antatime-widget toggle
 ```
 
 Damit lässt sich die Zeiterfassung auch auf ein Tastenkürzel legen.
+
+## Aktualisieren
+
+```bash
+antatime-widget update            # neuen Stand holen und installieren
+antatime-widget update --check    # nur nachsehen, ob es einen gibt
+```
+
+`update` holt den neuen Stand in den Ordner, aus dem installiert wurde (`git pull`), und führt dort `./install.sh` aus; der Dienst startet dabei neu. Der geklonte Ordner muss dafür erhalten bleiben. Installationen bis Version 1.1.0 kennen ihn noch nicht – dort einmal von Hand `git pull && ./install.sh` ausführen.
+
+Der Dienst sieht kurz nach dem Start und danach zweimal am Tag selbst nach (`git fetch` im Klon) und meldet ein bereitstehendes Update im Hinweis des Widgets (`hint`); installiert wird erst mit `antatime-widget update`. `ANTATIME_WIDGET_UPDATE_CHECK=0` in der Umgebung des Dienstes schaltet das ab.
 
 ## Andere Leisten
 
@@ -85,6 +96,7 @@ src/         Dienst und Befehlszeile (gemeinsame Logik aller Widgets)
   sync.ts      Verbindung zum Server, Abgleich, Neuverbinden
   model.ts     Datensätze, Start/Pause, Arbeitszeit und Soll von heute
   daemon.ts    Anzeige-Texte und lokale HTTP-Schnittstelle
+  update.ts    Aktualisierung aus dem Klon
 plasma/      KDE-Plasma-Miniprogramm (QML)
 gnome/       GNOME-Shell-Erweiterung
 macos/       SwiftBar-/xbar-Plugin

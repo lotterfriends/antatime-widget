@@ -1,10 +1,12 @@
 #!/usr/bin/env node
 import { request } from 'node:http';
+import { join } from 'node:path';
 import { createInterface } from 'node:readline/promises';
 import { configFile, loadConfig, port, saveConfig } from './config.ts';
 import { decodeServerKey, normalizeCode } from './crypto.ts';
 import { Daemon, type View } from './daemon.ts';
 import { wsUrl } from './sync.ts';
+import { update } from './update.ts';
 
 const HELP = `AnTaTime-Widget – Zeiterfassung in der Kontrollleiste
 
@@ -15,6 +17,8 @@ const HELP = `AnTaTime-Widget – Zeiterfassung in der Kontrollleiste
   antatime-widget toggle     Start/Pause umschalten
   antatime-widget setup      Server, Sync-Code und ggf. Server-Schlüssel von Hand eintragen
                              (nur nötig ohne AnTaTime-Desktop-App mit Sync)
+  antatime-widget update     neuen Stand holen und installieren
+                             (--check sieht nur nach, ob es einen gibt)
 `;
 
 function call(method: 'GET' | 'POST', path: string): Promise<View> {
@@ -95,6 +99,9 @@ async function main(): Promise<void> {
       return print(await call('POST', `/${cmd}`));
     case 'setup':
       return setup();
+    case 'update':
+      await update(join(import.meta.dirname, '..'), process.argv.includes('--check'));
+      return;
     default:
       console.log(HELP);
   }

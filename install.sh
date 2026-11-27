@@ -40,6 +40,8 @@ echo "Node: $NODE_BIN ($("$NODE_BIN" --version))"
 rm -rf "$APP_DIR/src"
 mkdir -p "$APP_DIR" "$(dirname "$BIN")"
 cp -r "$ROOT/src" "$ROOT/package.json" "$APP_DIR/"
+# Herkunft und Stand merken – „antatime-widget update“ holt von hier den neuen.
+printf '%s\n%s\n' "$ROOT" "$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || true)" > "$APP_DIR/source"
 cat > "$BIN" <<EOF
 #!/bin/sh
 exec "$NODE_BIN" --disable-warning=ExperimentalWarning "$APP_DIR/src/main.ts" "\$@"

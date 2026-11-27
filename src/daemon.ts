@@ -1,13 +1,19 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
+import { join } from 'node:path';
 import { loadConfig, loadState, port, stateFile, writePrivate, type SyncConfig } from './config.ts';
 import { SyncCrypto, decodeServerKey } from './crypto.ts';
 import { Vault } from './model.ts';
 import { render, type Format } from './render.ts';
 import { SyncClient } from './sync.ts';
+import { updateAvailable } from './update.ts';
 
 /** So lange wartet `GET /state?rev=…` höchstens auf eine Änderung. */
 const LONG_POLL_MS = 25_000;
 const CONFIG_POLL_MS = 60_000;
+/** Nach Updates sieht der Dienst kurz nach dem Start und danach zweimal am Tag. */
+const UPDATE_FIRST_MS = 60_000;
+const UPDATE_POLL_MS = 12 * 3_600_000;
+const UPDATE_HINT = 'Update verfügbar – „antatime-widget update“ ausführen';
 
 export interface View {
   /** Ändert sich mit jeder Änderung der Anzeige. */
@@ -48,6 +54,7 @@ export class Daemon {
   #waiters = new Set<() => void>();
   #saveTimer: NodeJS.Timeout | null = null;
   #dirty = false;
+  #update = false;
   #now: () => number;
 
   constructor(now: () => number = Date.now) {
@@ -87,6 +94,24 @@ export class Daemon {
     setInterval(() => this.#refresh(), 1000);
     // Sync später in der App eingerichtet oder geändert: übernehmen.
     setInterval(() => this.reload(), CONFIG_POLL_MS);
+    if (process.env.ANTATIME_WIDGET_UPDATE_CHECK !== '0') {
+      setTimeout(() => this.#checkUpdate(), UPDATE_FIRST_MS).unref();
+      setInterval(() => this.#checkUpdate(), UPDATE_POLL_MS).unref();
+    }
+  }
+
+  /** Hinweis auf ein bereitstehendes Update ein- oder ausblenden. */
+  setUpdateAvailable(available: boolean): void {
+    this.#update = available;
+    this.#refresh();
+  }
+
+  #checkUpdate(): void {
+    // Ohne Netz oder ohne Klon gibt es schlicht keinen Hinweis.
+    updateAvailable(join(import.meta.dirname, '..')).then(
+      (available) => this.setUpdateAvailable(available),
+      () => {},
+    );
   }
 
   stop(): void {
@@ -137,7 +162,7 @@ export class Daemon {
           ? 'Die Synchronisation wurde auf einem anderen Gerät beendet.'
           : 'Synchronisation in der AnTaTime-App einrichten',
         today: 'oder „antatime-widget setup“ ausführen.',
-        hint: null,
+        hint: this.#update ? UPDATE_HINT : null,
       };
     }
     const s = this.vault.today(now);
@@ -156,8 +181,11 @@ export class Daemon {
       status: s.running ? 'Arbeitszeit läuft' : 'Pausiert',
       current,
       today: `Heute: ${worked} von ${formatDuration(s.targetMs)}`,
+      // Probleme mit dem Sync gehen dem Hinweis auf ein Update vor.
       hint: client.connected
-        ? null
+        ? this.#update
+          ? UPDATE_HINT
+          : null
         : client.problem
           ? client.problem
           : this.vault.pending().length > 0
